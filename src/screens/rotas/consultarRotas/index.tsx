@@ -162,7 +162,7 @@ export default function ConsultarRotasScreen() {
 
       {/* CONTEÚDO PRINCIPAL */}
       <main className="flex-1 flex flex-col min-h-0 p-6 bg-[#090d16] space-y-4 overflow-hidden">
-        {erroApi && (
+        {/* {erroApi && (
           <div className="flex items-center justify-between p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-400 text-xs">
             <div className="flex items-center gap-2">
               <AlertCircle size={15} />
@@ -175,7 +175,7 @@ export default function ConsultarRotasScreen() {
               Recarregar
             </button>
           </div>
-        )}
+        )} */}
 
         {/* FILTROS */}
         <div className="flex flex-wrap gap-3 items-center justify-between flex-shrink-0">

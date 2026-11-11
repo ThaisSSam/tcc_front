@@ -2,8 +2,8 @@ import React, { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { GoogleMap, useJsApiLoader, Marker, type Libraries } from "@react-google-maps/api";
 import { Bell, Settings, Car, Route, UserIcon, ExternalLink, Navigation } from "lucide-react";
-import { veiculosEndpoints } from "./../services/endpoints/veiculos";
-import { rotasEndpoints } from "./../services/endpoints/rotas";
+import { veiculosEndpoints } from "../services/endpoints/veiculos";
+import { rotasEndpoints } from "../services/endpoints/rotas";
 
 const GOOGLE_MAPS_LIBRARIES: Libraries = ["places"];
 
@@ -59,27 +59,47 @@ export default function DashboardScreen() {
           setGpsAtivo(true);
         },
         () => {
-          // Permissão negada ou erro: mantém a localização padrão
           setGpsAtivo(false);
         }
       );
     }
   }, []);
 
-  // Busca os totais reais no backend ao montar a tela
+  // Busca os totais reais no backend de forma independente
   useEffect(() => {
     const carregarTotais = async () => {
-      try {
-        const [reqVeiculos, reqRotas] = await Promise.all([
-          veiculosEndpoints.listar(),
-          rotasEndpoints.listar()
-        ]);
+      const [resVeiculos, resRotas] = await Promise.allSettled([
+        veiculosEndpoints.listar(),
+        rotasEndpoints.listar(),
+      ]);
 
-        setTotalVeiculos(reqVeiculos?.data ? reqVeiculos.data.length : 0);
-        setTotalRotas(reqRotas?.data ? reqRotas.data.length : 0);
-      } catch (error) {
-        console.error("Erro ao buscar totais do dashboard", error);
+      // Tratamento dos veículos
+      if (resVeiculos.status === "fulfilled") {
+        const payload: any = resVeiculos.value?.data;
+        if (Array.isArray(payload)) {
+          setTotalVeiculos(payload.length);
+        } else if (Array.isArray(payload?.data)) {
+          setTotalVeiculos(payload.data.length);
+        } else {
+          setTotalVeiculos(0);
+        }
+      } else {
+        console.warn("Falha ao consultar veículos:", resVeiculos.reason);
         setTotalVeiculos(0);
+      }
+
+      // Tratamento das rotas
+      if (resRotas.status === "fulfilled") {
+        const payload: any = resRotas.value?.data;
+        if (Array.isArray(payload)) {
+          setTotalRotas(payload.length);
+        } else if (Array.isArray(payload?.data)) {
+          setTotalRotas(payload.data.length);
+        } else {
+          setTotalRotas(0);
+        }
+      } else {
+        console.warn("Falha ao consultar rotas:", resRotas.reason);
         setTotalRotas(0);
       }
     };
@@ -87,41 +107,24 @@ export default function DashboardScreen() {
     carregarTotais();
   }, []);
 
-  const dadosMeses = useMemo(() => {
-    const nomesMeses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-    const hoje = new Date();
-    const resultado = [];
-    const alturasMock = [35, 55, 20, 70, 45, 65, 30, 80, 50, 88, 40, 60];
-
-    for (let i = 11; i >= 0; i--) {
-      const dataRef = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
-      resultado.push({
-        nome: nomesMeses[dataRef.getMonth()],
-        altura: alturasMock[11 - i],
-        isAtual: i === 0,
-      });
-    }
-    return resultado;
-  }, []);
-
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 overflow-y-auto font-sans">
       <header className="flex justify-between items-center border-b border-slate-800 bg-[#0f172a] px-6 py-5 sticky top-0 z-10">
-        <h1 className="text-xl font-bold text-slate-100 font-['Inter']">
+        <h1 className="text-xl font-bold text-slate-100">
           Calculadora de trajeto
         </h1>
         <div className="flex items-center gap-4 text-xs text-slate-400">
           <span>Última atualização: agora mesmo</span>
-          <button className="p-2 bg-amber-500/10 text-amber-500 rounded-xl hover:bg-amber-500/20 transition-all relative">
-            <Bell size={16} />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-amber-500 rounded-full"></span>
-          </button>
-          <button className="p-2 bg-slate-800 text-slate-300 rounded-xl hover:bg-slate-700 transition-all">
-            <Settings size={16} />
-          </button>
-          <div className="w-8 h-8 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-blue-500/10">
+
+          {/* BOTÃO DO PERFIL NO CABEÇALHO */}
+          <button
+            type="button"
+            onClick={() => navigate("/perfil")}
+            title="Meu Perfil"
+            className="w-8 h-8 bg-blue-600 hover:bg-blue-500 rounded-xl flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-blue-500/20 transition-all cursor-pointer"
+          >
             <UserIcon size={16} />
-          </div>
+          </button>
         </div>
       </header>
 
@@ -138,7 +141,7 @@ export default function DashboardScreen() {
             </div>
             <div>
               <h2 className="text-3xl font-bold text-slate-100">
-                {totalVeiculos !== null ? totalVeiculos : "-"}
+                {totalVeiculos !== null ? totalVeiculos : "..."}
               </h2>
               <p className="text-[11px] text-slate-500 mt-1">Veículos cadastrados na garagem</p>
             </div>
@@ -154,7 +157,7 @@ export default function DashboardScreen() {
             </div>
             <div>
               <h2 className="text-3xl font-bold text-emerald-400">
-                {totalRotas !== null ? totalRotas : "-"}
+                {totalRotas !== null ? totalRotas : "..."}
               </h2>
               <p className="text-[11px] text-slate-500 mt-1">Simulações realizadas</p>
             </div>
@@ -182,7 +185,7 @@ export default function DashboardScreen() {
             </span>
           </div>
 
-          <div className="w-full h-64 rounded-lg overflow-hidden relative border border-slate-800/80 pointer-events-none">
+          <div className="w-full h-86 rounded-lg overflow-hidden relative border border-slate-800/80 pointer-events-none">
             {isLoaded ? (
               <GoogleMap
                 mapContainerStyle={mapContainerStyle}
@@ -190,12 +193,11 @@ export default function DashboardScreen() {
                 zoom={13}
                 options={{
                   styles: darkMapStyle,
-                  disableDefaultUI: true, // Mapa limpo para visualização rápida no dashboard
+                  disableDefaultUI: true,
                   zoomControl: false,
                   gestureHandling: "none",
                 }}
               >
-                {/* Marcador da localização atual */}
                 <Marker
                   position={posicaoAtual}
                   icon={{
@@ -208,30 +210,7 @@ export default function DashboardScreen() {
                 Carregando mapa...
               </div>
             )}
-            {/* Overlay sutil para reforçar clique */}
             <div className="absolute inset-0 bg-blue-600/0 group-hover:bg-blue-600/5 transition-all" />
-          </div>
-        </div>
-
-        {/* GRÁFICO */}
-        <div className="border border-slate-800 rounded-xl p-5 bg-[#131b2e]">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-6">
-            Gastos por rota (em R$) - Últimos 12 meses
-          </h3>
-          <div className="flex items-end justify-between h-28 px-4 w-full gap-2">
-            {dadosMeses.map((item, idx) => (
-              <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
-                <div
-                  className={`w-full rounded-t transition-all ${
-                    item.isAtual ? "bg-gradient-to-t from-indigo-600 to-purple-400 shadow-md shadow-indigo-500/20" : "bg-slate-800/40 hover:bg-slate-700/60"
-                  }`}
-                  style={{ height: `${item.altura}%` }}
-                ></div>
-                <span className={`text-[9px] font-medium ${item.isAtual ? "text-indigo-400 font-bold" : "text-slate-500"}`}>
-                  {item.nome}
-                </span>
-              </div>
-            ))}
           </div>
         </div>
       </main>

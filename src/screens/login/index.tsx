@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Mail, Lock, Calculator } from "lucide-react";
 import CustomToast from "../../components/CustomToast";
-import loginEndpoints from "../../services/endpoints/login";
+import { loginEndpoints } from "../../services/endpoints/login";
 
 interface LoginScreenProps {
   onLoginSucesso: (novoToken: string) => void;
@@ -10,64 +10,57 @@ interface LoginScreenProps {
 
 export default function LoginScreen({ onLoginSucesso }: LoginScreenProps) {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState("admin@example.com");
   const [senha, setSenha] = useState("");
   const [lembrarAcesso, setLembrarAcesso] = useState(false);
-  const [carregando, setCarregando] = useState(false);
+  const [statusLogin, setStatusLogin] = useState("");
   const [erroLogin, setErroLogin] = useState("");
 
   const handleSubmeter = async (e: React.FormEvent) => {
     e.preventDefault();
     setErroLogin("");
-    setCarregando(true);
+    setStatusLogin("Conectando...");
 
-    const emailLimpo = email.trim().toLowerCase();
-
-    // 1. Atalho de desenvolvimento local (admin / admin)
-    if (emailLimpo === "admin" && senha === "admin") {
-      const fakeToken = "mock_token_admin_logado_123456";
-      onLoginSucesso(fakeToken);
-      navigate("/home", { replace: true });
-      return;
-    }
-
-    // 2. Autenticação real com a API .NET conectada ao banco MySQL
     try {
+      // API CHAMA AQUI (Porta 8000)
       const resultado = await loginEndpoints.executarLogin({
-        email: emailLimpo,
+        email: email,
         senha: senha,
         lembrarAcesso: lembrarAcesso,
       });
 
+      setStatusLogin("Logado com sucesso!");
+
       if (resultado.data?.token) {
         onLoginSucesso(resultado.data.token);
-        navigate("/home", { replace: true });
-      } else {
-        setErroLogin("Token de acesso não recebido.");
       }
-    } catch (error: any) {
-      setErroLogin(error.message || "E-mail ou senha incorretos.");
-    } finally {
-      setCarregando(false);
+
+      setTimeout(() => {
+        navigate("/home", { replace: true });
+      }, 500);
+    } catch (error: unknown) {
+      setStatusLogin("");
+      if (error instanceof Error) {
+        setErroLogin(error.message);
+      } else {
+        setErroLogin("E-mail ou senha incorretos.");
+      }
     }
   };
 
   return (
     <main className="grid grid-cols-1 lg:grid-cols-5 min-h-screen font-sans">
-      {/* LADO ESQUERDO */}
-      <div className="hidden lg:flex lg:col-span-3 flex-col justify-center items-center text-white">
+      <div className="hidden lg:flex lg:col-span-3 bg-[#0b1d45] flex-col justify-center items-center text-white">
         <img
           src="/imagens/login.png"
           alt="Imagem de login"
           className="w-full h-full object-cover object-[45%_55%]"
           onError={(e) => {
-            // Prevenção caso a imagem estática ainda não exista
             e.currentTarget.style.display = "none";
           }}
         />
       </div>
 
-      {/* LADO DIREITO */}
       <div className="col-span-1 lg:col-span-2 flex flex-col justify-center items-center bg-[#0f172a] p-8 h-full relative">
         <div className="w-full max-w-xs">
           <div className="mb-10 text-white flex items-center gap-3">
@@ -75,17 +68,25 @@ export default function LoginScreen({ onLoginSucesso }: LoginScreenProps) {
               <Calculator size={20} className="text-white" />
             </div>
             <div className="flex flex-col">
-              <h2 className="font-bold text-sm leading-none text-slate-100">Calculadora de Trajeto</h2>
+              <h2 className="font-bold text-sm leading-none text-slate-100">
+                Calculadora de Trajeto
+              </h2>
               <p className="text-[10px] text-slate-500">Gestão de Atividades</p>
             </div>
           </div>
 
           <div className="mb-6">
             <h2 className="text-xl font-bold text-white">Bem-vindo de volta</h2>
-            <p className="text-xs text-gray-500 mt-1">Insira suas credenciais para continuar</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Insira suas credenciais para continuar
+            </p>
           </div>
 
-          <form onSubmit={handleSubmeter} className="flex flex-col gap-4" noValidate>
+          <form
+            onSubmit={handleSubmeter}
+            className="flex flex-col gap-4"
+            noValidate
+          >
             <div>
               <label className="text-xs font-semibold text-gray-400 block mb-1.5">
                 Usuário / E-mail <span className="text-red-500">*</span>
@@ -99,7 +100,7 @@ export default function LoginScreen({ onLoginSucesso }: LoginScreenProps) {
                   className="w-full p-2.5 pl-10 border border-[#3a475c] rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none bg-gray-800/40 text-white text-sm transition-all placeholder-slate-500"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="teste@tcc.com ou admin"
+                  placeholder="admin@example.com"
                   required
                 />
               </div>
@@ -118,7 +119,7 @@ export default function LoginScreen({ onLoginSucesso }: LoginScreenProps) {
                   className="w-full p-2.5 pl-10 border border-[#3a475c] rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none bg-gray-800/40 text-white text-sm transition-all placeholder-slate-600"
                   value={senha}
                   onChange={(e) => setSenha(e.target.value)}
-                  placeholder="••••••"
+                  placeholder="••••••••"
                   required
                 />
               </div>
@@ -145,25 +146,26 @@ export default function LoginScreen({ onLoginSucesso }: LoginScreenProps) {
 
             <button
               type="submit"
-              disabled={carregando}
+              disabled={!!statusLogin && statusLogin !== "Logado com sucesso!"}
               className="w-full bg-[#2b71e3] hover:bg-blue-600 text-white p-2.5 rounded-lg font-semibold text-sm transition-colors mt-2 cursor-pointer disabled:opacity-50"
             >
-              {carregando ? "Conectando..." : "Entrar"}
+              {statusLogin ? statusLogin : "Entrar"}
             </button>
-          </form>
-
-          <div className="mt-8">
-            <hr className="border-slate-800/60" />
-            <div className="flex flex-row justify-center items-center text-xs text-slate-500 gap-1 mt-6">
-              <p>Precisa de acesso?</p>
-              <button
-                type="button"
-                className="text-blue-500 hover:text-blue-400 font-medium transition-colors cursor-pointer"
-              >
-                Fale com o administrador
-              </button>
+            {/* Adicione este bloco antes do fechamento da div do formulário no seu LoginScreen */}
+            <div className="mt-8">
+              <hr className="border-slate-800/60" />
+              <div className="flex flex-row justify-center items-center text-xs text-slate-500 gap-1 mt-6">
+                <p>Não tem uma conta?</p>
+                <button
+                  type="button"
+                  onClick={() => navigate("/cadastro")}
+                  className="text-blue-500 hover:text-blue-400 font-medium transition-colors cursor-pointer"
+                >
+                  Cadastre-se
+                </button>
+              </div>
             </div>
-          </div>
+          </form>
         </div>
 
         {erroLogin && (

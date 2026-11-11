@@ -15,6 +15,7 @@ export interface LoginResponseSuccess {
     id: string;
     nome: string;
     email: string;
+    papel?: string;
   };
 }
 
@@ -29,11 +30,6 @@ export interface LoginEndpointResult {
   success: boolean;
 }
 
-export interface RecoveryEndpointResult {
-  success: boolean;
-  message: string;
-}
-
 export interface AppHandledError extends Error {
   success: boolean;
 }
@@ -41,9 +37,9 @@ export interface AppHandledError extends Error {
 export const loginEndpoints = {
   executarLogin: async (corpoRequest: LoginRequestData): Promise<LoginEndpointResult> => {
     try {
-      // Faz o POST direto para o endpoint do .NET 8
+      // POST estrito para a rota do Laravel
       const response = await api.post<LoginResponseSuccess>('/api/login', {
-        email: corpoRequest.email,
+        email: corpoRequest.email.trim(),
         senha: corpoRequest.senha,
       });
 
@@ -59,8 +55,15 @@ export const loginEndpoints = {
           mensagem = dadosErro.mensagem;
         } else if (dadosErro?.message) {
           mensagem = dadosErro.message;
-        } else if (Array.isArray(dadosErro?.errors) && dadosErro.errors.length > 0) {
-          mensagem = dadosErro.errors[0];
+        } else if (dadosErro?.errors) {
+          if (Array.isArray(dadosErro.errors) && dadosErro.errors.length > 0) {
+            mensagem = dadosErro.errors[0];
+          } else if (typeof dadosErro.errors === 'object') {
+            const primeiroCampo = Object.values(dadosErro.errors)[0];
+            if (Array.isArray(primeiroCampo) && primeiroCampo.length > 0) {
+              mensagem = primeiroCampo[0];
+            }
+          }
         } else if (axiosError.message) {
           mensagem = axiosError.message;
         }
@@ -71,29 +74,6 @@ export const loginEndpoints = {
       const erroTratado = new Error(mensagem) as AppHandledError;
       erroTratado.success = false;
       throw erroTratado;
-    }
-  },
-
-  solicitarRecuperacao: async (login: string): Promise<RecoveryEndpointResult> => {
-    try {
-      const response = await api.post<{ success?: boolean; message?: string }>('/api/esqueci-senha', {
-        email: login.trim(),
-      });
-      return {
-        success: response.data?.success ?? true,
-        message: response.data?.message || 'Link de recuperação enviado com sucesso.',
-      };
-    } catch (error: unknown) {
-      let mensagem = 'Erro ao solicitar recuperação.';
-
-      if (axios.isAxiosError(error)) {
-        const axiosError = error as AxiosError<ApiErrorResponse>;
-        mensagem = axiosError.response?.data?.message || axiosError.message;
-      } else if (error instanceof Error) {
-        mensagem = error.message;
-      }
-
-      throw new Error(mensagem);
     }
   },
 

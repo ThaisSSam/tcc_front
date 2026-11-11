@@ -55,6 +55,11 @@ const tratarErroRequisicao = (error: unknown, fallbackMessage: string): AppHandl
       mensagem = dadosErro.message;
     } else if (Array.isArray(dadosErro?.errors) && dadosErro.errors.length > 0) {
       mensagem = dadosErro.errors[0];
+    } else if (dadosErro?.errors && typeof dadosErro.errors === 'object') {
+      const primeiro = Object.values(dadosErro.errors)[0];
+      if (Array.isArray(primeiro) && primeiro.length > 0) {
+        mensagem = primeiro[0];
+      }
     } else if (axiosError.message) {
       mensagem = axiosError.message;
     }
@@ -67,12 +72,30 @@ const tratarErroRequisicao = (error: unknown, fallbackMessage: string): AppHandl
   return erroTratado;
 };
 
+// Converte chaves em camelCase para snake_case exigido pelo Laravel
+const normalizarPayloadLaravel = (veiculo: Partial<VeiculoDTO>) => ({
+  apelido: veiculo.apelido,
+  marca: veiculo.marca,
+  modelo: veiculo.modelo,
+  ano_fabricacao: veiculo.ano_fabricacao ?? veiculo.anoFabricacao,
+  tipo_propulsao: veiculo.tipo_propulsao ?? veiculo.tipoPropulsao ?? 'combustao',
+  consumo_kml: veiculo.consumo_kml ?? veiculo.consumoKml ?? null,
+  consumo_kwh_100km: veiculo.consumo_kwh_100km ?? veiculo.consumoKwh100km ?? null,
+  capacidade_bateria_kwh: veiculo.capacidade_bateria_kwh ?? veiculo.capacidadeBateriaKwh ?? null,
+  autonomia_km: veiculo.autonomia_km ?? veiculo.autonomiaKm ?? null,
+  fonte_consumo: veiculo.fonte_consumo ?? veiculo.fonteConsumo ?? 'manual',
+});
+
 export const veiculosEndpoints = {
   // GET /api/veiculos
   listar: async (): Promise<VeiculoEndpointResult<VeiculoDTO[]>> => {
     try {
-      const response = await api.get<VeiculoDTO[]>('/api/veiculos');
-      return { data: response.data, success: true };
+      const response = await api.get<any>('/api/veiculos');
+      // Desempacota { data: [...] } do Laravel Resource caso exista
+      const lista: VeiculoDTO[] = Array.isArray(response.data)
+        ? response.data
+        : (response.data?.data || []);
+      return { data: lista, success: true };
     } catch (error: unknown) {
       throw tratarErroRequisicao(error, 'Erro ao carregar a lista de veículos.');
     }
@@ -81,8 +104,10 @@ export const veiculosEndpoints = {
   // POST /api/veiculos
   cadastrar: async (veiculo: Partial<VeiculoDTO>): Promise<VeiculoEndpointResult<VeiculoDTO>> => {
     try {
-      const response = await api.post<VeiculoDTO>('/api/veiculos', veiculo);
-      return { data: response.data, success: true };
+      const payload = normalizarPayloadLaravel(veiculo);
+      const response = await api.post<any>('/api/veiculos', payload);
+      const item: VeiculoDTO = response.data?.data || response.data;
+      return { data: item, success: true };
     } catch (error: unknown) {
       throw tratarErroRequisicao(error, 'Erro ao cadastrar o veículo.');
     }
@@ -91,8 +116,10 @@ export const veiculosEndpoints = {
   // PUT /api/veiculos/{id}
   atualizar: async (id: string, veiculo: Partial<VeiculoDTO>): Promise<VeiculoEndpointResult<VeiculoDTO>> => {
     try {
-      const response = await api.put<VeiculoDTO>(`/api/veiculos/${id}`, veiculo);
-      return { data: response.data, success: true };
+      const payload = normalizarPayloadLaravel(veiculo);
+      const response = await api.put<any>(`/api/veiculos/${id}`, payload);
+      const item: VeiculoDTO = response.data?.data || response.data;
+      return { data: item, success: true };
     } catch (error: unknown) {
       throw tratarErroRequisicao(error, 'Erro ao atualizar o veículo.');
     }

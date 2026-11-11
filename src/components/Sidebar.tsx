@@ -158,46 +158,39 @@ export default function SidebarComponent({
           >
             Mapa
           </SidebarItem>
-          <SidebarItem 
-            icon={Receipt} 
-            isOpen={isOpen}
-            variant={currentPath === '/gastos' ? 'active' : 'default'}
-            onClick={() => onNavigate?.('/gastos')}
-          >
-            Gastos
-          </SidebarItem>
-        </div>
-
-        {/* NAVEGAÇÃO ADM */}
-        <div className="space-y-1">
-          {isOpen && (
-            <p className="text-[10px] font-bold tracking-wider text-slate-500 px-3 mb-2 uppercase">Administração</p>
-          )}
-
-          <SidebarItem 
-            icon={Settings} 
-            isOpen={isOpen}
-            variant={currentPath === '/configuracoes' ? 'active' : 'default'}
-            onClick={() => onNavigate?.('/configuracoes')}
-          >
-            Configurações
-          </SidebarItem>
         </div>
       </div>
 
-      {/* RODAPÉ */}
+      {/* RODAPÉ DO USUÁRIO NAVEGÁVEL */}
       <div className={cn("border-t border-slate-700/60 pt-3 flex items-center justify-between px-1", !isOpen && "flex-col gap-2")}>
-        <div className="flex items-center gap-2 overflow-hidden">
-          <div className="w-8 h-8 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center font-bold text-xs border border-blue-500/20 flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => onNavigate?.('/perfil')}
+          title="Ver Meu Perfil"
+          className={cn(
+            "flex items-center gap-2 overflow-hidden text-left p-1 rounded-xl transition-all cursor-pointer group",
+            currentPath === '/perfil' 
+              ? "bg-blue-500/10 border border-blue-500/30" 
+              : "hover:bg-slate-800/60",
+            !isOpen && "justify-center w-full p-0"
+          )}
+        >
+          <div className={cn(
+            "w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0 transition-colors",
+            currentPath === '/perfil'
+              ? "bg-blue-600 text-white shadow-md shadow-blue-500/20"
+              : "bg-blue-500/20 text-blue-400 border border-blue-500/20 group-hover:bg-blue-600 group-hover:text-white"
+          )}>
             <User size={15} />            
           </div>
           {isOpen && (
-            <div className="overflow-hidden leading-tight">
-              <h4 className="text-xs font-bold text-slate-200 truncate">Thais</h4>
-              <p className="text-[9px] text-slate-500 truncate">Administrador</p>
+            <div className="overflow-hidden leading-tight flex-1">
+              <h4 className="text-xs font-bold text-slate-200 group-hover:text-white truncate">Thais</h4>
+              <p className="text-[9px] text-slate-500 group-hover:text-slate-400 truncate">Administrador</p>
             </div>
           )}
-        </div>
+        </button>
+
         <button 
           onClick={onLogout}
           type="button"

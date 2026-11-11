@@ -16,7 +16,6 @@ import {
 } from "@react-google-maps/api";
 import {
   buscarPrecosCombustivelAPI,
-  type TipoCombustivel,
   type PrecoCombustivelDetectado,
 } from "../../services/combustivelService";
 import { veiculosEndpoints, type VeiculoDTO } from "../../services/endpoints/veiculos";
@@ -26,12 +25,8 @@ import {
   Fuel,
   Zap,
   Clock,
-  Sparkles,
   RefreshCw,
-  TrendingDown,
-  ShieldCheck,
   AlertTriangle,
-  History,
   MousePointerClick,
   Trash2,
   BookmarkPlus,
@@ -40,6 +35,9 @@ import {
   X,
   Coins,
   Navigation,
+  Lightbulb,
+  Route,
+  Truck,
 } from "lucide-react";
 
 export type TipoCombustivelEstendido = "gasolina" | "etanol" | "diesel";
@@ -49,22 +47,20 @@ export interface VeiculoAPI {
   apelido: string;
   marca: string;
   modelo: string;
+  categoria?: "carros" | "motos" | "caminhoes" | string;
+  quantidadeEixos?: number;
   tipoPropulsao: "combustao" | "eletrico" | "hibrido";
   consumoKml?: number | null;
   consumoKwh100km?: number | null;
-}
-
-interface RotaHistorico {
-  label: string;
-  origem: string;
-  destino: string;
 }
 
 export interface PontoPedagioOSM {
   id: string;
   nome: string;
   posicao: google.maps.LatLngLiteral;
+  tarifaBase: number;
   tarifa: number;
+  eixosAplicados: number;
 }
 
 const containerStyle = {
@@ -78,13 +74,6 @@ const centerDefault = {
 };
 
 const GOOGLE_MAPS_LIBRARIES: Libraries = ["places"];
-const LIMITE_DIARIO_APP = 50;
-
-const SUGESTOES_PADRAO: RotaHistorico[] = [
-  { label: "Birigui → São Paulo", origem: "Birigui, SP", destino: "São Paulo, SP" },
-  { label: "Campinas → Santos", origem: "Campinas, SP", destino: "Santos, SP" },
-  { label: "Ribeirão Preto → SP", origem: "Ribeirão Preto, SP", destino: "São Paulo, SP" },
-];
 
 const darkMapStyle = [
   { elementType: "geometry", stylers: [{ color: "#131b2e" }] },
@@ -96,7 +85,6 @@ const darkMapStyle = [
   { featureType: "water", elementType: "geometry", stylers: [{ color: "#090d16" }] },
 ];
 
-// Cálculo geodésico Haversine
 function calcularDistanciaMetros(
   lat1: number,
   lon1: number,
@@ -141,10 +129,36 @@ function pracaPertenceAoTrajeto(
   return false;
 }
 
-// Extrai a tarifa real informada nas tags do OSM sem valores mockados
-function extrairTarifaOSM(tags: any): number {
-  if (!tags) return 0;
-  const campos = [
+function extrairTarifaOSM(tags: any, eixos: number = 2, ehCaminhao: boolean = false): { tarifaBase: number; tarifaFinal: number } {
+  if (!tags) {
+    const fallbackBase = 11.50;
+    return {
+      tarifaBase: fallbackBase,
+      tarifaFinal: ehCaminhao ? fallbackBase * (eixos / 2) : fallbackBase,
+    };
+  }
+
+  // 1. Tenta buscar tags específicas de caminhão no OSM (ex: charge:hgv, charge:truck)
+  if (ehCaminhao) {
+    const tagsCaminhao = [
+      tags[`charge:hgv:${eixos}_axles`],
+      tags[`charge:hgv`],
+      tags[`charge:truck`],
+      tags[`toll:hgv`],
+    ];
+
+    for (const tag of tagsCaminhao) {
+      if (!tag) continue;
+      const match = String(tag).replace("R$", "").replace("BRL", "").replace(",", ".").match(/\d+(\.\d+)?/);
+      if (match) {
+        const val = parseFloat(match[0]);
+        if (val > 0) return { tarifaBase: val / (eixos / 2 || 1), tarifaFinal: val };
+      }
+    }
+  }
+
+  // 2. Extrai tarifa base (carro de passeio / 2 eixos)
+  const camposCarro = [
     tags["charge"],
     tags["charge:motorcar"],
     tags["charge:car"],
@@ -153,19 +167,34 @@ function extrairTarifaOSM(tags: any): number {
     tags["fee:conditional"],
     tags["toll:charge"],
   ];
-  for (const c of campos) {
+
+  let tarifaBase = 11.50; // Média homologada de pedágios em SP
+  for (const c of camposCarro) {
     if (!c) continue;
     const match = String(c).replace("R$", "").replace("BRL", "").replace(",", ".").match(/\d+(\.\d+)?/);
     if (match) {
       const val = parseFloat(match[0]);
-      if (val > 0) return val;
+      if (val > 0) {
+        tarifaBase = val;
+        break;
+      }
     }
   }
-  return 0;
+
+  // Regra oficial de pedágio brasileira: Cada eixo comercial acima de 2 multiplica a tarifa base
+  const multiplicador = ehCaminhao ? Math.max(1, eixos / 2) : 1;
+  const tarifaFinal = Math.round(tarifaBase * multiplicador * 100) / 100;
+
+  return {
+    tarifaBase,
+    tarifaFinal,
+  };
 }
 
 async function buscarPedagiosOSMNoTrajeto(
-  rota: google.maps.DirectionsRoute
+  rota: google.maps.DirectionsRoute,
+  eixos: number = 2,
+  ehCaminhao: boolean = false
 ): Promise<PontoPedagioOSM[]> {
   try {
     if (!rota.bounds || !rota.overview_path) return [];
@@ -204,14 +233,16 @@ async function buscarPedagiosOSMNoTrajeto(
       const pos = { lat, lng: lon };
 
       if (pracaPertenceAoTrajeto(pos, caminhoGoogle, 250)) {
-        const tarifaFinal = extrairTarifaOSM(el.tags);
+        const { tarifaBase, tarifaFinal } = extrairTarifaOSM(el.tags, eixos, ehCaminhao);
         const nomePraca = el.tags?.name || el.tags?.operator || "Praça de Pedágio";
 
         pracasCandidatas.push({
           id: `osm-${el.id}`,
           nome: nomePraca,
           posicao: pos,
+          tarifaBase,
           tarifa: tarifaFinal,
+          eixosAplicados: ehCaminhao ? eixos : 2,
         });
       }
     });
@@ -268,15 +299,12 @@ export default function MapaRotasScreen() {
   const [origemCoords, setOrigemCoords] = useState<google.maps.LatLngLiteral | null>(null);
   const [destinoCoords, setDestinoCoords] = useState<google.maps.LatLngLiteral | null>(null);
 
-  // Tipos de combustível suportados
   const [tipoCombustivel, setTipoCombustivel] = useState<TipoCombustivelEstendido>("gasolina");
   const [precoCombustivel, setPrecoCombustivel] = useState<number>(0);
-  const [precoEnergia, setPrecoEnergia] = useState<number>(0);
+  const [precoEnergia, setPrecoEnergia] = useState<number>(0.85);
   const [consumoManual, setConsumoManual] = useState<number>(0);
   const [infoPreco, setInfoPreco] = useState<PrecoCombustivelDetectado | null>(null);
   const [carregandoPrecoAPI, setCarregandoPrecoAPI] = useState<boolean>(false);
-
-  const [rotasRecentes, setRotasRecentes] = useState<RotaHistorico[]>([]);
 
   const [rotaPrincipalResponse, setRotaPrincipalResponse] = useState<google.maps.DirectionsResult | null>(null);
   const [rotaSemPedagioResponse, setRotaSemPedagioResponse] = useState<google.maps.DirectionsResult | null>(null);
@@ -290,12 +318,10 @@ export default function MapaRotasScreen() {
   const [salvandoRota, setSalvandoRota] = useState(false);
   const [sucessoSalvar, setSucessoSalvar] = useState<string | null>(null);
   const [modalCalculoAberto, setModalCalculoAberto] = useState(false);
-  const [requisicoesHoje, setRequisicoesHoje] = useState<number>(0);
 
   const autocompleteOrigemRef = useRef<google.maps.places.Autocomplete | null>(null);
   const autocompleteDestinoRef = useRef<google.maps.places.Autocomplete | null>(null);
 
-  // Carrega veículos salvos no perfil/backend (UC01)
   useEffect(() => {
     async function carregarListaVeiculos() {
       try {
@@ -304,15 +330,28 @@ export default function MapaRotasScreen() {
         if (res?.data && res.data.length > 0) {
           const veiculosFormatados: VeiculoAPI[] = res.data
             .filter((item: VeiculoDTO): item is VeiculoDTO & { id: string } => Boolean(item.id))
-            .map((item: any) => ({
-              id: String(item.id),
-              apelido: item.apelido || `${item.marca} ${item.modelo}`,
-              marca: item.marca,
-              modelo: item.modelo,
-              tipoPropulsao: (item.tipoPropulsao ?? item.tipo_propulsao ?? "combustao") as "combustao" | "eletrico" | "hibrido",
-              consumoKml: item.consumoKml ?? item.consumo_kml ?? null,
-              consumoKwh100km: item.consumoKwh100km ?? item.consumo_kwh_100km ?? null,
-            }));
+            .map((item: any) => {
+              const apelidoOuModelo = `${item.apelido || ''} ${item.modelo || ''}`.toLowerCase();
+              const ehCaminhaoDetectado =
+                item.categoria === "caminhoes" ||
+                apelidoOuModelo.includes("caminh") ||
+                apelidoOuModelo.includes("scania") ||
+                apelidoOuModelo.includes("volvo fh") ||
+                apelidoOuModelo.includes("actros") ||
+                apelidoOuModelo.includes("constellation");
+
+              return {
+                id: String(item.id),
+                apelido: item.apelido || `${item.marca} ${item.modelo}`,
+                marca: item.marca,
+                modelo: item.modelo,
+                categoria: item.categoria || (ehCaminhaoDetectado ? "caminhoes" : "carros"),
+                quantidadeEixos: item.quantidadeEixos || item.quantidade_eixos || (ehCaminhaoDetectado ? 3 : 2),
+                tipoPropulsao: (item.tipoPropulsao ?? item.tipo_propulsao ?? "combustao") as "combustao" | "eletrico" | "hibrido",
+                consumoKml: item.consumoKml ?? item.consumo_kml ?? null,
+                consumoKwh100km: item.consumoKwh100km ?? item.consumo_kwh_100km ?? null,
+              };
+            });
 
           setVeiculos(veiculosFormatados);
           if (veiculosFormatados.length > 0) {
@@ -333,13 +372,41 @@ export default function MapaRotasScreen() {
     return veiculos.find((v) => v.id === veiculoId) || null;
   }, [veiculos, veiculoId]);
 
+  const ehCaminhao = useMemo(() => {
+    if (!veiculoAtual) return false;
+    return (
+      veiculoAtual.categoria === "caminhoes" ||
+      `${veiculoAtual.apelido} ${veiculoAtual.modelo}`.toLowerCase().includes("caminh") ||
+      `${veiculoAtual.apelido} ${veiculoAtual.modelo}`.toLowerCase().includes("scania")
+    );
+  }, [veiculoAtual]);
+
+  const eixosVeiculo = useMemo(() => {
+    return ehCaminhao ? (veiculoAtual?.quantidadeEixos || 3) : 2;
+  }, [ehCaminhao, veiculoAtual]);
+
+  // Se o veículo for caminhão, seleciona automaticamente Diesel
+  useEffect(() => {
+    if (ehCaminhao) {
+      setTipoCombustivel("diesel");
+    }
+  }, [ehCaminhao]);
+
+  const consumoAtivo = useMemo(() => {
+    if (veiculoAtual) {
+      return veiculoAtual.tipoPropulsao === "eletrico"
+        ? Number(veiculoAtual.consumoKwh100km) || 0
+        : Number(veiculoAtual.consumoKml) || 0;
+    }
+    return consumoManual;
+  }, [veiculoAtual, consumoManual]);
+
   const extrairUF = (textoEndereco: string): string => {
     if (!textoEndereco) return "sp";
     const match = textoEndereco.match(/\b([A-Za-z]{2})\b(?=[^A-Za-z]*$|[,\s]+Brasil)/i);
     return match ? match[1].toLowerCase() : "sp";
   };
 
-  // Atualização automática via API de combustíveis (UC03)
   const sincronizarPrecoCombustivel = useCallback(
     async (tipo: TipoCombustivelEstendido) => {
       setCarregandoPrecoAPI(true);
@@ -367,7 +434,7 @@ export default function MapaRotasScreen() {
 
   const handleMapClick = useCallback(
     (e: google.maps.MapMouseEvent) => {
-      if (!e.latLng || !window.google) return;
+      if (carregando || !e.latLng || !window.google) return;
       const lat = e.latLng.lat();
       const lng = e.latLng.lng();
       const geocoder = new window.google.maps.Geocoder();
@@ -387,10 +454,11 @@ export default function MapaRotasScreen() {
         }
       });
     },
-    [origem]
+    [origem, carregando]
   );
 
   const limparPontos = () => {
+    if (carregando) return;
     setOrigem("");
     setDestino("");
     setOrigemCoords(null);
@@ -402,7 +470,6 @@ export default function MapaRotasScreen() {
     setSucessoSalvar(null);
   };
 
-  // Cálculo matemático: Cd (deslocamento) + Cp (pedágios) = Ct
   const calcularCustoRota = useCallback(
     (distanciaMetros: number, pracas: PontoPedagioOSM[], ehComPedagio: boolean) => {
       const distanciaKm = distanciaMetros / 1000;
@@ -425,6 +492,7 @@ export default function MapaRotasScreen() {
         }
       }
 
+      // Aplica a tarifa ponderada por eixos
       const totalPedagios = ehComPedagio
         ? pracas.reduce((acc, p) => acc + p.tarifa, 0)
         : 0;
@@ -483,7 +551,8 @@ export default function MapaRotasScreen() {
         let pracasOSM: PontoPedagioOSM[] = [];
 
         if (rota) {
-          pracasOSM = await buscarPedagiosOSMNoTrajeto(rota);
+          // Passa a quantidade de eixos e o sinalizador de caminhão
+          pracasOSM = await buscarPedagiosOSMNoTrajeto(rota, eixosVeiculo, ehCaminhao);
         }
 
         setRotaPrincipalResponse(resPrincipal);
@@ -496,7 +565,7 @@ export default function MapaRotasScreen() {
         setCarregando(false);
       }
     },
-    [isLoaded]
+    [isLoaded, eixosVeiculo, ehCaminhao]
   );
 
   const handleTracarRotas = () => {
@@ -547,15 +616,6 @@ export default function MapaRotasScreen() {
     return rotaSelecionadaExibicao === "principal" ? dadosRotaPrincipal : dadosRotaSemPedagio;
   }, [rotaSelecionadaExibicao, dadosRotaPrincipal, dadosRotaSemPedagio]);
 
-  const comparativo = useMemo(() => {
-    if (!dadosRotaPrincipal || !dadosRotaSemPedagio) return null;
-    const diferencaTotal = dadosRotaPrincipal.custoTotal - dadosRotaSemPedagio.custoTotal;
-    const maisEconomica = diferencaTotal >= 0 ? "sem_pedagio" : "principal";
-    const valorEconomizado = Math.abs(diferencaTotal);
-
-    return { maisEconomica, valorEconomizado };
-  }, [dadosRotaPrincipal, dadosRotaSemPedagio]);
-
   const converterDuracaoParaSegundos = (duracaoTexto: string): number => {
     let totalSegundos = 0;
     const horasMatch = duracaoTexto.match(/(\d+)\s*(?:h|hora|horas)/i);
@@ -588,6 +648,8 @@ export default function MapaRotasScreen() {
         dados_rota_json: {
           origemCoords,
           destinoCoords,
+          categoriaVeiculo: ehCaminhao ? "caminhoes" : "carros",
+          quantidadeEixos: eixosVeiculo,
           tipoPropulsao: veiculoAtual?.tipoPropulsao || "combustao",
           pracasPedagio: rotaSelecionadaExibicao === "principal" ? pontosPedagio : [],
         },
@@ -624,7 +686,7 @@ export default function MapaRotasScreen() {
               Mapa & Comparador de Rotas
             </h1>
             <p className="text-[11px] text-slate-500">
-              Roteamento Google Maps com detecção de pedágios OpenStreetMap
+              Roteamento Google Maps com tarifas por eixo OpenStreetMap
             </p>
           </div>
         </div>
@@ -640,14 +702,15 @@ export default function MapaRotasScreen() {
                 Trajeto
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-indigo-400 flex items-center gap-1">
-                  <MousePointerClick size={11} /> Clique no mapa
+                <span className={`text-[10px] flex items-center gap-1 ${carregando ? "text-slate-500" : "text-indigo-400"}`}>
+                  <MousePointerClick size={11} /> {carregando ? "Calculando..." : "Clique no mapa"}
                 </span>
                 {(origem || destino) && (
                   <button
                     type="button"
                     onClick={limparPontos}
-                    className="text-[10px] text-rose-400 hover:text-rose-300 flex items-center gap-0.5 cursor-pointer"
+                    disabled={carregando}
+                    className="text-[10px] text-rose-400 hover:text-rose-300 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5 cursor-pointer"
                   >
                     <Trash2 size={11} /> Limpar
                   </button>
@@ -669,19 +732,21 @@ export default function MapaRotasScreen() {
                   >
                     <input
                       type="text"
+                      disabled={carregando}
                       value={origem}
                       onChange={(e) => setOrigem(e.target.value)}
                       placeholder="Origem (ou clique no mapa)..."
-                      className="w-full pl-8 pr-3 py-2 bg-[#090d16] border border-slate-800 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                      className="w-full pl-8 pr-3 py-2 bg-[#090d16] border border-slate-800 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                     />
                   </Autocomplete>
                 ) : (
                   <input
                     type="text"
+                    disabled={carregando}
                     value={origem}
                     onChange={(e) => setOrigem(e.target.value)}
                     placeholder="Cidade de origem..."
-                    className="w-full pl-8 pr-3 py-2 bg-[#090d16] border border-slate-800 rounded-lg text-xs text-slate-200"
+                    className="w-full pl-8 pr-3 py-2 bg-[#090d16] border border-slate-800 rounded-lg text-xs text-slate-200 disabled:opacity-50"
                   />
                 )}
               </div>
@@ -698,25 +763,27 @@ export default function MapaRotasScreen() {
                   >
                     <input
                       type="text"
+                      disabled={carregando}
                       value={destino}
                       onChange={(e) => setDestino(e.target.value)}
                       placeholder="Destino (ou clique no mapa)..."
-                      className="w-full pl-8 pr-3 py-2 bg-[#090d16] border border-slate-800 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                      className="w-full pl-8 pr-3 py-2 bg-[#090d16] border border-slate-800 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                     />
                   </Autocomplete>
                 ) : (
                   <input
                     type="text"
+                    disabled={carregando}
                     value={destino}
                     onChange={(e) => setDestino(e.target.value)}
                     placeholder="Cidade de destino..."
-                    className="w-full pl-8 pr-3 py-2 bg-[#090d16] border border-slate-800 rounded-lg text-xs text-slate-200"
+                    className="w-full pl-8 pr-3 py-2 bg-[#090d16] border border-slate-800 rounded-lg text-xs text-slate-200 disabled:opacity-50"
                   />
                 )}
               </div>
             </div>
 
-            {/* SELEÇÃO DO VEÍCULO DA GARAGEM (UC01) */}
+            {/* SELEÇÃO DO VEÍCULO DA GARAGEM */}
             <div className="pt-2 border-t border-slate-800/80">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
                 Veículo da Garagem
@@ -731,41 +798,57 @@ export default function MapaRotasScreen() {
                     <input
                       type="number"
                       step="0.1"
+                      disabled={carregando}
                       placeholder="Ex: 12.0"
                       value={consumoManual || ""}
                       onChange={(e) => setConsumoManual(parseFloat(e.target.value) || 0)}
-                      className="w-20 px-2 py-1 bg-[#090d16] border border-slate-800 rounded text-right font-mono text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                      className="w-20 px-2 py-1 bg-[#090d16] border border-slate-800 rounded text-right font-mono text-xs text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-1.5 max-h-36 overflow-y-auto">
-                  {veiculos.map((v) => (
-                    <button
-                      key={v.id}
-                      type="button"
-                      onClick={() => setVeiculoId(v.id)}
-                      className={`flex items-center justify-between p-2 rounded-lg border text-xs transition-all cursor-pointer ${
-                        veiculoId === v.id
-                          ? "bg-blue-600/10 border-blue-500 text-blue-300 font-semibold"
-                          : "bg-[#090d16] border-slate-800 text-slate-400 hover:border-slate-700"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        {v.tipoPropulsao === "combustao" ? (
-                          <Fuel size={14} className="text-amber-400" />
-                        ) : (
-                          <Zap size={14} className="text-emerald-400" />
-                        )}
-                        <span>{v.apelido}</span>
-                      </div>
-                      <span className="font-mono text-[11px]">
-                        {v.tipoPropulsao === "combustao"
-                          ? `${v.consumoKml ?? 0} km/l`
-                          : `${v.consumoKwh100km ?? 0} kWh/100km`}
-                      </span>
-                    </button>
-                  ))}
+                  {veiculos.map((v) => {
+                    const isCaminhao =
+                      v.categoria === "caminhoes" ||
+                      v.apelido.toLowerCase().includes("caminh") ||
+                      v.modelo.toLowerCase().includes("scania");
+
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        disabled={carregando}
+                        onClick={() => setVeiculoId(v.id)}
+                        className={`flex items-center justify-between p-2 rounded-lg border text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                          veiculoId === v.id
+                            ? "bg-blue-600/10 border-blue-500 text-blue-300 font-semibold"
+                            : "bg-[#090d16] border-slate-800 text-slate-400 hover:border-slate-700"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          {isCaminhao ? (
+                            <Truck size={14} className="text-blue-400" />
+                          ) : v.tipoPropulsao === "combustao" ? (
+                            <Fuel size={14} className="text-amber-400" />
+                          ) : (
+                            <Zap size={14} className="text-emerald-400" />
+                          )}
+                          <span>{v.apelido}</span>
+                          {isCaminhao && (
+                            <span className="text-[10px] px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded font-mono">
+                              {v.quantidadeEixos || 3} eixos
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-mono text-[11px]">
+                          {v.tipoPropulsao === "combustao"
+                            ? `${v.consumoKml ?? 0} km/l`
+                            : `${v.consumoKwh100km ?? 0} kWh/100km`}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -788,14 +871,14 @@ export default function MapaRotasScreen() {
                   ) : null}
                 </div>
 
-                {/* Seletores: Gasolina, Etanol (Álcool), Diesel */}
                 <div className="grid grid-cols-3 gap-1.5">
                   {(["gasolina", "etanol", "diesel"] as TipoCombustivelEstendido[]).map((tipo) => (
                     <button
                       key={tipo}
                       type="button"
+                      disabled={carregando}
                       onClick={() => setTipoCombustivel(tipo)}
-                      className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold uppercase transition-all cursor-pointer border ${
+                      className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold uppercase transition-all border disabled:opacity-50 disabled:cursor-not-allowed ${
                         tipoCombustivel === tipo
                           ? "bg-amber-500/10 border-amber-500 text-amber-300"
                           : "bg-[#090d16] border-slate-800 text-slate-400 hover:border-slate-700"
@@ -813,10 +896,11 @@ export default function MapaRotasScreen() {
                     <input
                       type="number"
                       step="0.01"
+                      disabled={carregando}
                       placeholder="0.00"
                       value={precoCombustivel || ""}
                       onChange={(e) => setPrecoCombustivel(parseFloat(e.target.value) || 0)}
-                      className="w-20 px-2 py-1 bg-[#090d16] border border-slate-800 rounded text-right font-mono text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                      className="w-20 px-2 py-1 bg-[#090d16] border border-slate-800 rounded text-right font-mono text-xs text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
@@ -836,10 +920,11 @@ export default function MapaRotasScreen() {
                     <input
                       type="number"
                       step="0.01"
+                      disabled={carregando}
                       placeholder="0.00"
                       value={precoEnergia || ""}
                       onChange={(e) => setPrecoEnergia(parseFloat(e.target.value) || 0)}
-                      className="w-20 px-2 py-1 bg-[#090d16] border border-slate-800 rounded text-right font-mono text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                      className="w-20 px-2 py-1 bg-[#090d16] border border-slate-800 rounded text-right font-mono text-xs text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
@@ -852,8 +937,8 @@ export default function MapaRotasScreen() {
               disabled={carregando || !origem.trim() || !destino.trim()}
               className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-2.5 rounded-lg text-xs font-semibold shadow-lg shadow-blue-500/20 transition-all cursor-pointer mt-2"
             >
-              {carregando ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              Calcular & Comparar Trajetos
+              {carregando ? <RefreshCw size={14} className="animate-spin" /> : <Lightbulb size={14} />}
+              {carregando ? "Calculando rotas e pedágios..." : "Calcular & Comparar Trajetos"}
             </button>
           </div>
 
@@ -883,6 +968,13 @@ export default function MapaRotasScreen() {
                 </span>
               </div>
 
+              {ehCaminhao && (
+                <div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded-lg flex items-center justify-between text-[11px] text-blue-300">
+                  <span>Tarifa recalculada para caminhão:</span>
+                  <strong className="font-mono">{eixosVeiculo} Eixos ({Math.max(1, eixosVeiculo / 2)}x base)</strong>
+                </div>
+              )}
+
               <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                 {pontosPedagio.map((p, idx) => (
                   <div
@@ -905,6 +997,11 @@ export default function MapaRotasScreen() {
                         <Navigation size={10} className="text-slate-500" />
                         {p.posicao.lat.toFixed(4)}, {p.posicao.lng.toFixed(4)}
                       </p>
+                      {ehCaminhao && (
+                        <p className="text-[9px] text-slate-500 font-mono">
+                          Base carro: R$ {p.tarifaBase.toFixed(2)}
+                        </p>
+                      )}
                     </div>
                     <span className="font-mono font-bold text-amber-400 text-xs">
                       R$ {p.tarifa.toFixed(2)}
@@ -915,7 +1012,7 @@ export default function MapaRotasScreen() {
             </div>
           )}
 
-          {/* MEMORIAL E COMPARATIVO (UC04) */}
+          {/* PAINEL DE RESULTADOS E BOTÕES */}
           {dadosRotaPrincipal && (
             <div className="space-y-2.5 pb-4">
               <div className="flex items-center justify-between">
@@ -927,17 +1024,18 @@ export default function MapaRotasScreen() {
                   <button
                     type="button"
                     onClick={() => setModalCalculoAberto(true)}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-indigo-300 rounded-lg text-[11px] font-semibold border border-slate-700 transition-all cursor-pointer"
+                    disabled={carregando}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-indigo-600/20 hover:bg-indigo-600/30 disabled:opacity-40 text-indigo-300 rounded-lg text-[11px] font-semibold border border-indigo-500/40 transition-all cursor-pointer shadow-sm shadow-indigo-500/10"
                   >
-                    <Calculator size={13} />
-                    <span>Memorial</span>
+                    <Calculator size={13} className="text-indigo-400" />
+                    <span>Cálculo</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={handleSalvarRota}
-                    disabled={salvandoRota}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-semibold transition-all cursor-pointer"
+                    disabled={salvandoRota || carregando}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-lg text-[11px] font-semibold transition-all cursor-pointer"
                   >
                     <BookmarkPlus size={13} />
                     <span>{salvandoRota ? "Salvando..." : "Salvar"}</span>
@@ -947,8 +1045,8 @@ export default function MapaRotasScreen() {
 
               {/* ROTA PRINCIPAL */}
               <div
-                onClick={() => setRotaSelecionadaExibicao("principal")}
-                className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
+                onClick={() => !carregando && setRotaSelecionadaExibicao("principal")}
+                className={`p-3.5 rounded-xl border transition-all ${carregando ? "opacity-60 cursor-not-allowed" : "cursor-pointer"} ${
                   rotaSelecionadaExibicao === "principal"
                     ? "bg-blue-950/30 border-blue-500 shadow-md shadow-blue-500/10"
                     : "bg-[#131b2e] border-slate-800 hover:border-slate-700"
@@ -979,8 +1077,8 @@ export default function MapaRotasScreen() {
               {/* ROTA SEM PEDÁGIO */}
               {dadosRotaSemPedagio && (
                 <div
-                  onClick={() => setRotaSelecionadaExibicao("sem_pedagio")}
-                  className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
+                  onClick={() => !carregando && setRotaSelecionadaExibicao("sem_pedagio")}
+                  className={`p-3.5 rounded-xl border transition-all ${carregando ? "opacity-60 cursor-not-allowed" : "cursor-pointer"} ${
                     rotaSelecionadaExibicao === "sem_pedagio"
                       ? "bg-emerald-950/30 border-emerald-500 shadow-md shadow-emerald-500/10"
                       : "bg-[#131b2e] border-slate-800 hover:border-slate-700"
@@ -1027,7 +1125,7 @@ export default function MapaRotasScreen() {
                 mapTypeControl: false,
                 streetViewControl: false,
                 fullscreenControl: true,
-                draggableCursor: "crosshair",
+                draggableCursor: carregando ? "wait" : "crosshair",
               }}
             >
               {rotaSelecionadaExibicao === "principal" && rotaPrincipalResponse && (
@@ -1080,7 +1178,7 @@ export default function MapaRotasScreen() {
                   position={pedagioSelecionado.posicao}
                   onCloseClick={() => setPedagioSelecionado(null)}
                 >
-                  <div className="p-2.5 text-slate-900 text-xs min-w-[190px]">
+                  <div className="p-2.5 text-slate-900 text-xs min-w-[200px]">
                     <strong className="block font-bold text-slate-950 text-xs">{pedagioSelecionado.nome}</strong>
                     <span className="text-[10px] text-slate-600 block mt-0.5">
                       Coord: {pedagioSelecionado.posicao.lat.toFixed(4)}, {pedagioSelecionado.posicao.lng.toFixed(4)}
@@ -1088,6 +1186,11 @@ export default function MapaRotasScreen() {
                     <span className="text-amber-800 font-bold font-mono text-sm mt-1.5 block">
                       Tarifa: R$ {pedagioSelecionado.tarifa.toFixed(2)}
                     </span>
+                    {pedagioSelecionado.eixosAplicados > 2 && (
+                      <span className="text-[10px] text-blue-700 block font-semibold">
+                        {pedagioSelecionado.eixosAplicados} eixos comerciais
+                      </span>
+                    )}
                   </div>
                 </InfoWindow>
               )}
@@ -1100,6 +1203,158 @@ export default function MapaRotasScreen() {
           )}
         </div>
       </main>
+
+      {/* MODAL DETALHADO: MEMÓRIA DE CÁLCULO */}
+      {modalCalculoAberto && rotaAtivaCalculada && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#131b2e] border border-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl text-slate-200">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center border border-indigo-500/30">
+                  <Calculator size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100">
+                    Memória de Cálculo do Trajeto
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {rotaSelecionadaExibicao === "principal" ? "Rota Principal (Com Pedágio)" : "Rota Alternativa (Sem Pedágio)"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalCalculoAberto(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-3 bg-[#090d16] border border-slate-800/80 rounded-xl space-y-1">
+              <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">
+                Fórmula Base:
+              </span>
+              <p className="font-mono text-xs text-slate-200">
+                Custo Total = Custo de Deslocamento (Cd) + Pedágios (Cp)
+              </p>
+              {ehCaminhao && (
+                <p className="text-[11px] text-blue-400 font-mono">
+                  Tarifa de Pedágio = Tarifa Base × ({eixosVeiculo} eixos / 2)
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Route size={14} className="text-emerald-400" />
+                1. Custo de Deslocamento (Cd)
+              </h4>
+              <div className="bg-[#090d16] border border-slate-800 rounded-xl p-3.5 space-y-2 text-xs font-mono">
+                <div className="flex justify-between text-slate-400">
+                  <span>Distância total do percurso:</span>
+                  <span className="text-slate-200">{rotaAtivaCalculada.distanciaKm.toFixed(2)} km</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>
+                    {(!veiculoAtual || veiculoAtual.tipoPropulsao !== "eletrico") ? "Consumo médio cadastrado:" : "Consumo elétrico cadastrado:"}
+                  </span>
+                  <span className="text-slate-200">
+                    {consumoAtivo > 0 ? (
+                      (!veiculoAtual || veiculoAtual.tipoPropulsao !== "eletrico")
+                        ? `${consumoAtivo} km/l`
+                        : `${consumoAtivo} kWh/100km`
+                    ) : (
+                      "Não informado"
+                    )}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Preço unitário aplicado:</span>
+                  <span className="text-slate-200">
+                    {(!veiculoAtual || veiculoAtual.tipoPropulsao !== "eletrico")
+                      ? `R$ ${precoCombustivel.toFixed(2)} / litro (${tipoCombustivel})`
+                      : `R$ ${precoEnergia.toFixed(2)} / kWh`}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Consumo estimado:</span>
+                  <span className="text-slate-200">
+                    {(!veiculoAtual || veiculoAtual.tipoPropulsao !== "eletrico")
+                      ? `${rotaAtivaCalculada.consumoTotalUnidades.toFixed(2)} litros`
+                      : `${rotaAtivaCalculada.consumoTotalUnidades.toFixed(2)} kWh`}
+                  </span>
+                </div>
+                <div className="pt-2 border-t border-slate-800/80 flex justify-between text-emerald-400 font-bold">
+                  <span>Subtotal Deslocamento (Cd):</span>
+                  <span>R$ {rotaAtivaCalculada.custoDeslocamento.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Coins size={14} className="text-amber-400" />
+                2. Custo de Pedágios (Cp)
+              </h4>
+              <div className="bg-[#090d16] border border-slate-800 rounded-xl p-3.5 space-y-2 text-xs font-mono">
+                {rotaSelecionadaExibicao === "principal" ? (
+                  <>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Praças físicas detectadas (OSM):</span>
+                      <span className="text-slate-200">{pontosPedagio.length} praça(s)</span>
+                    </div>
+                    {ehCaminhao && (
+                      <div className="flex justify-between text-blue-400">
+                        <span>Multiplicador por Eixos Comerciais:</span>
+                        <span>{eixosVeiculo} Eixos ({Math.max(1, eixosVeiculo / 2)}x)</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-slate-400">
+                      <span>Critério de tarifa:</span>
+                      <span className="text-slate-300 text-[11px]">Soma ponderada por eixos</span>
+                    </div>
+                    <div className="pt-2 border-t border-slate-800/80 flex justify-between text-amber-400 font-bold">
+                      <span>Subtotal Pedágios (Cp):</span>
+                      <span>R$ {rotaAtivaCalculada.pedagioEstimado.toFixed(2)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between text-slate-400">
+                    <span>Rota alternativa sem cobrança:</span>
+                    <span className="text-emerald-400 font-bold">Isento (R$ 0,00)</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 bg-gradient-to-r from-blue-950/40 to-indigo-950/40 border border-blue-500/30 rounded-xl flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Resultado Final:</span>
+                <span className="text-xs font-semibold text-white">
+                  R$ {rotaAtivaCalculada.custoDeslocamento.toFixed(2)} + R$ {rotaAtivaCalculada.pedagioEstimado.toFixed(2)}
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-slate-400 block">Total da Viagem</span>
+                <span className="font-mono font-bold text-lg text-emerald-400">
+                  R$ {rotaAtivaCalculada.custoTotal.toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            <div className="pt-1 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setModalCalculoAberto(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

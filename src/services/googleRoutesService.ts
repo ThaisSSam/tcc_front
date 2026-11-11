@@ -1,4 +1,16 @@
-import { ResultadoRotaRealGoogle } from "../screens/mapa";
+type ResultadoRotaRealGoogle = {
+  distanciaMetros: number;
+  duracaoSegundos: number;
+  duracaoTexto: string;
+  distanciaKm: number;
+  tollInfo: {
+    temPedagio: boolean;
+    custoTotalPedagio: number;
+    moeda: string;
+  };
+  pracasPedagio: [];
+  polylineEncoded: string;
+};
 
 export async function consultarRotaGoogleAPI(
   origem: string,
