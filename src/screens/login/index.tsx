@@ -24,13 +24,6 @@ export default function LoginScreen({ onLoginSucesso }: LoginScreenProps) {
     const emailLimpo = email.trim().toLowerCase();
 
     // 1. Atalho de desenvolvimento local (admin / admin)
-    if (emailLimpo === "admin" && senha === "admin") {
-      const fakeToken = "mock_token_admin_logado_123456";
-      onLoginSucesso(fakeToken);
-      navigate("/home", { replace: true });
-      return;
-    }
-
     // 2. Autenticação real com a API .NET conectada ao banco MySQL
     try {
       const resultado = await loginEndpoints.executarLogin({

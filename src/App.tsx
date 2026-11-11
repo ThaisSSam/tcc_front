@@ -1,5 +1,6 @@
-import React, { useState, Suspense, lazy } from "react";
+import React, { useState, useEffect, Suspense, lazy } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
+import loginEndpoints from "./services/endpoints/login";
 import AppLoadingFallback from "./components/layout/AppLoadingFallback";
 import AppLayout from "./components/layout/AppLayout";
 import ConsultarRotasScreen from "./screens/rotas/consultarRotas";
@@ -22,10 +23,22 @@ export default function App() {
     setToken(novoToken);
   };
 
-  const handleLogout = () => {
-    localStorage.clear();
+  const handleLogout = async () => {
+    await loginEndpoints.executarLogout();
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("token");
+    localStorage.removeItem("auth_user");
     setToken(null);
   };
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setToken(null);
+    };
+
+    window.addEventListener("auth:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("auth:unauthorized", handleUnauthorized);
+  }, []);
 
   if (!token) {
     return (

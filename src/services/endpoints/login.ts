@@ -41,7 +41,6 @@ export interface AppHandledError extends Error {
 export const loginEndpoints = {
   executarLogin: async (corpoRequest: LoginRequestData): Promise<LoginEndpointResult> => {
     try {
-      // Faz o POST direto para o endpoint do .NET 8
       const response = await api.post<LoginResponseSuccess>('/api/login', {
         email: corpoRequest.email,
         senha: corpoRequest.senha,

@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { GoogleMap, useJsApiLoader, Marker, type Libraries } from "@react-google-maps/api";
 import { Bell, Settings, Car, Route, UserIcon, ExternalLink, Navigation } from "lucide-react";
 import { veiculosEndpoints } from "./../services/endpoints/veiculos";
-import { rotasEndpoints } from "./../services/endpoints/rotas";
 
 const GOOGLE_MAPS_LIBRARIES: Libraries = ["places"];
 
@@ -45,7 +44,7 @@ export default function DashboardScreen() {
   
   // Estados para os dados reais dos cards
   const [totalVeiculos, setTotalVeiculos] = useState<number | null>(null);
-  const [totalRotas, setTotalRotas] = useState<number | null>(null);
+  const totalRotas: number | null = null;
 
   // Obtém a localização GPS em tempo real do navegador do usuário
   useEffect(() => {
@@ -70,17 +69,12 @@ export default function DashboardScreen() {
   useEffect(() => {
     const carregarTotais = async () => {
       try {
-        const [reqVeiculos, reqRotas] = await Promise.all([
-          veiculosEndpoints.listar(),
-          rotasEndpoints.listar()
-        ]);
+        const reqVeiculos = await veiculosEndpoints.listar();
 
         setTotalVeiculos(reqVeiculos?.data ? reqVeiculos.data.length : 0);
-        setTotalRotas(reqRotas?.data ? reqRotas.data.length : 0);
       } catch (error) {
         console.error("Erro ao buscar totais do dashboard", error);
-        setTotalVeiculos(0);
-        setTotalRotas(0);
+        setTotalVeiculos(null);
       }
     };
 

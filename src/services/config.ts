@@ -1,6 +1,6 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 
-const baseURL = (import.meta.env.VITE_API_URL).replace(/\/+$/, '');
+const baseURL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
 
 const pendingRequests = new Map<string, Promise<AxiosResponse>>();
 
