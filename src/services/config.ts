@@ -1,6 +1,7 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 
 const baseURL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+// ⚠️ Mude de localhost para 127.0.0.1 para evitar problemas com IPv6 ([::1])
 
 const pendingRequests = new Map<string, Promise<AxiosResponse>>();
 
@@ -45,9 +46,9 @@ const generateRequestKey = (config: AxiosRequestConfig): string => {
 const api = axios.create({
   baseURL,
   timeout: 15000,
+  withCredentials: false, 
 });
 
-// Injeta o Token JWT em requisições autenticadas
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
   if (token) {
@@ -56,6 +57,7 @@ api.interceptors.request.use((config) => {
   if (config.data && !(config.data instanceof FormData)) {
     config.headers['Content-Type'] = 'application/json';
   }
+  config.headers['Accept'] = 'application/json';
   return config;
 });
 
@@ -84,7 +86,6 @@ api.request = function (config: AxiosRequestConfig): any {
   return requestPromise;
 };
 
-// Intercepta 401 para redirecionar se o token expirar
 api.interceptors.response.use(
   (response) => response,
   async (error) => {

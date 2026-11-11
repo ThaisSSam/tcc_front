@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Car,
@@ -8,11 +8,12 @@ import {
   ArrowLeft,
   Save,
   Loader2,
-  Sparkles,
   CheckCircle2,
   Edit3,
   Flame,
   AlertTriangle,
+  Lightbulb,
+  Truck,
 } from 'lucide-react';
 import { type Veiculo } from '../consultarVeiculos/table/tableConfig';
 import {
@@ -24,9 +25,9 @@ import {
 } from '../../../services/endpoints/catalogoVeiculos';
 
 interface VeiculoFormProps {
-  initialData?: Partial<Veiculo>;
+  initialData?: Partial<Veiculo> & { quantidadeEixos?: number; categoria?: string };
   isEditing?: boolean;
-  onSubmit: (data: Omit<Veiculo, 'id'>) => void;
+  onSubmit: (data: any) => void;
   salvando?: boolean;
 }
 
@@ -38,10 +39,17 @@ export function VeiculoForm({
 }: VeiculoFormProps) {
   const navigate = useNavigate();
 
-  // Tipo FIPE (carros, motos, caminhoes)
-  const [vehicleType, setVehicleType] = useState<VehicleType>('carros');
+  // Categoria FIPE
+  const [vehicleType, setVehicleType] = useState<VehicleType>(
+    (initialData?.categoria as VehicleType) || 'carros'
+  );
 
-  // Estados dos Campos Principais
+  // Eixos do Caminhão (Padrão: 2 eixos)
+  const [quantidadeEixos, setQuantidadeEixos] = useState<number>(
+    initialData?.quantidadeEixos || 2
+  );
+
+  // Campos Principais
   const [apelido, setApelido] = useState(initialData?.apelido || '');
   const [marcaNome, setMarcaNome] = useState(initialData?.marca || '');
   const [marcaCodigo, setMarcaCodigo] = useState<number | null>(null);
@@ -58,10 +66,9 @@ export function VeiculoForm({
     initialData?.tipoPropulsao || 'combustao'
   );
   const [combustivelEspecifico, setCombustivelEspecifico] = useState<string>('Flex');
-
   const [consumo, setConsumo] = useState(initialData?.consumo?.toString() || '12.0');
 
-  // Listas vindas da FIPE
+  // Listas da FIPE
   const [listaMarcas, setListaMarcas] = useState<FipeMarcaItem[]>([]);
   const [listaModelos, setListaModelos] = useState<FipeModeloItem[]>([]);
   const [listaAnos, setListaAnos] = useState<FipeAnoItem[]>([]);
@@ -74,6 +81,8 @@ export function VeiculoForm({
 
   const [sugestaoConsumoAtiva, setSugestaoConsumoAtiva] = useState(false);
   const [erros, setErros] = useState<Record<string, string>>({});
+
+  const dadosHidratadosRef = useRef(false);
 
   // 1. Carrega Marcas da categoria
   useEffect(() => {
@@ -95,7 +104,80 @@ export function VeiculoForm({
     };
   }, [vehicleType]);
 
-  // 2. Mudança de Marca (pelo input digitável com datalist)
+  // 2. Hidratação automática ao EDITAR veículo existente
+  useEffect(() => {
+    if (!isEditing || !initialData || listaMarcas.length === 0 || dadosHidratadosRef.current) {
+      return;
+    }
+
+    const veiculo = initialData;
+
+    async function hidratarEdicao() {
+      try {
+        const marcaAlvo = veiculo.marca?.trim().toLowerCase();
+        if (!marcaAlvo) return;
+
+        const marcaAchada = listaMarcas.find(
+          (m) => m.nome.trim().toLowerCase() === marcaAlvo
+        );
+
+        if (!marcaAchada) return;
+
+        setMarcaCodigo(marcaAchada.valor);
+        setCarregandoModelos(true);
+
+        const modelos = await fipeService.listarModelos(vehicleType, marcaAchada.valor);
+        setListaModelos(modelos);
+        setCarregandoModelos(false);
+
+        const modeloAlvo = veiculo.modelo?.trim().toLowerCase();
+        if (!modeloAlvo) return;
+
+        const modeloAchado = modelos.find(
+          (m) =>
+            m.modelo.trim().toLowerCase() === modeloAlvo ||
+            modeloAlvo.includes(m.modelo.trim().toLowerCase()) ||
+            m.modelo.trim().toLowerCase().includes(modeloAlvo)
+        );
+
+        if (!modeloAchado) return;
+
+        setModeloCodigo(modeloAchado.valor);
+        setCarregandoAnos(true);
+
+        const anosRes = await fipeService.listarAnos(vehicleType, marcaAchada.valor, modeloAchado.valor);
+        let anosLista: FipeAnoItem[] = [];
+        if (anosRes && 'itens' in anosRes) {
+          anosLista = anosRes.itens;
+          setAvisoFipeInstavel(Boolean(anosRes.emContingencia));
+        } else if (Array.isArray(anosRes)) {
+          anosLista = anosRes;
+        }
+
+        setListaAnos(anosLista);
+
+        if (veiculo.anoFabricacao) {
+          const anoEncontrado = anosLista.find((a) =>
+            a.nome.includes(String(veiculo.anoFabricacao))
+          );
+          if (anoEncontrado) {
+            setAnoDescricao(anoEncontrado.valor);
+          }
+        }
+
+        dadosHidratadosRef.current = true;
+      } catch (err) {
+        console.error('Erro na hidratação de edição:', err);
+      } finally {
+        setCarregandoModelos(false);
+        setCarregandoAnos(false);
+      }
+    }
+
+    hidratarEdicao();
+  }, [isEditing, initialData, listaMarcas, vehicleType]);
+
+  // 3. Mudança de Marca
   const handleMarcaInputChange = async (valorDigitado: string) => {
     setMarcaNome(valorDigitado);
     setModeloNome('');
@@ -125,7 +207,7 @@ export function VeiculoForm({
     }
   };
 
-  // 3. Mudança de Modelo (pelo input digitável com datalist)
+  // 4. Mudança de Modelo
   const handleModeloInputChange = async (valorDigitado: string) => {
     setModeloNome(valorDigitado);
     setAnoDescricao('');
@@ -158,7 +240,7 @@ export function VeiculoForm({
     }
   };
 
-  // 4. Mudança de Ano / Combustível -> define automaticamente a propulsão e o consumo
+  // 5. Mudança de Ano / Combustível
   const handleAnoChange = (anoValorChave: string) => {
     setAnoDescricao(anoValorChave);
     if (!anoValorChave) return;
@@ -166,7 +248,6 @@ export function VeiculoForm({
     const anoObj = listaAnos.find((a) => a.valor === anoValorChave);
     if (!anoObj) return;
 
-    // Extrai o ano numérico inicial
     const matchAno = anoObj.nome.match(/\b(19\d\d|20\d\d)\b/);
     if (matchAno) {
       setAnoFabricacao(matchAno[1]);
@@ -176,7 +257,11 @@ export function VeiculoForm({
     let detectCombustivel = 'Flex';
     let propulsao: 'combustao' | 'eletrico' | 'hibrido' = 'combustao';
 
-    if (nomeLower.includes('elétr') || nomeLower.includes('eletric') || nomeLower.includes('ev')) {
+    if (vehicleType === 'caminhoes') {
+      detectCombustivel = 'Diesel';
+      propulsao = 'combustao';
+      setConsumo('3.5');
+    } else if (nomeLower.includes('elétr') || nomeLower.includes('eletric') || nomeLower.includes('ev')) {
       detectCombustivel = 'Elétrico';
       propulsao = 'eletrico';
       setConsumo('15.0');
@@ -187,7 +272,7 @@ export function VeiculoForm({
     } else if (nomeLower.includes('diesel')) {
       detectCombustivel = 'Diesel';
       propulsao = 'combustao';
-      setConsumo('11.0');
+      setConsumo('10.0');
     } else if (nomeLower.includes('gasolina')) {
       detectCombustivel = 'Gasolina';
       propulsao = 'combustao';
@@ -242,13 +327,13 @@ export function VeiculoForm({
       anoFabricacao: parseInt(anoFabricacao, 10),
       tipoPropulsao,
       consumo: parseFloat(consumo),
-      capacidadeBateria: undefined,
-      autonomiaKm: undefined,
+      categoria: vehicleType,
+      quantidadeEixos: vehicleType === 'caminhoes' ? Number(quantidadeEixos) : 2,
     });
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 max-w-5xl">
+    <form onSubmit={handleSubmit} className="space-y-6 max-w-7xl">
       {/* CATEGORIA FIPE */}
       <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-5 space-y-3">
         <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
@@ -269,6 +354,11 @@ export function VeiculoForm({
                 setListaModelos([]);
                 setListaAnos([]);
                 setAvisoFipeInstavel(false);
+                dadosHidratadosRef.current = false;
+                if (tipo === 'caminhoes') {
+                  setConsumo('3.5');
+                  setCombustivelEspecifico('Diesel');
+                }
               }}
               className={`p-2.5 rounded-lg border text-xs font-semibold capitalize transition-all cursor-pointer ${
                 vehicleType === tipo
@@ -285,7 +375,7 @@ export function VeiculoForm({
       {/* DADOS DO VEÍCULO */}
       <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-5 space-y-4">
         <h2 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-          <Car size={16} className="text-blue-500" />
+          {vehicleType === 'caminhoes' ? <Truck size={16} className="text-blue-500" /> : <Car size={16} className="text-blue-500" />}
           Dados do Veículo (Consulta FIPE)
         </h2>
 
@@ -297,7 +387,7 @@ export function VeiculoForm({
             </label>
             <input
               type="text"
-              placeholder="Ex: Meu Onix, Carro de Viagem, Trabalho"
+              placeholder="Ex: Scania R450, Carreta Graneleira, Meu Caminhão"
               value={apelido}
               onChange={(e) => setApelido(e.target.value)}
               className={`w-full px-3.5 py-2.5 bg-[#131b2e] border rounded-lg text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none transition-all ${
@@ -307,7 +397,40 @@ export function VeiculoForm({
             {erros.apelido && <p className="text-[11px] text-rose-400 mt-1">{erros.apelido}</p>}
           </div>
 
-          {/* MARCA DIGITÁVEL COM AUTOCOMPLETE */}
+          {/* QUANTIDADE DE EIXOS (EXCLUSIVO PARA CAMINHÕES) */}
+          {vehicleType === 'caminhoes' && (
+            <div className="sm:col-span-2 p-3.5 bg-blue-950/20 border border-blue-500/30 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-blue-300 flex items-center gap-2">
+                  <Truck size={16} className="text-blue-400" /> Quantidade de Eixos do Caminhão:
+                </label>
+                <span className="text-[11px] font-mono font-bold text-amber-400">
+                  Multiplicador Tarifário: {quantidadeEixos}x
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                A tarifa de pedágio em rodovias estaduais e federais é multiplicada pelo total de eixos do caminhão.
+              </p>
+              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 pt-1">
+                {[2, 3, 4, 5, 6, 7, 8, 9].map((eixo) => (
+                  <button
+                    key={eixo}
+                    type="button"
+                    onClick={() => setQuantidadeEixos(eixo)}
+                    className={`py-2 px-2.5 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                      quantidadeEixos === eixo
+                        ? 'bg-blue-600 border-blue-400 text-white shadow-md shadow-blue-500/20'
+                        : 'bg-[#131b2e] border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    {eixo} Eixos
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* MARCA */}
           <div>
             <label className="text-xs text-slate-400 block mb-1.5 font-medium">
               Marca / Fabricante <span className="text-rose-500">*</span>
@@ -336,7 +459,7 @@ export function VeiculoForm({
             {erros.marca && <p className="text-[11px] text-rose-400 mt-1">{erros.marca}</p>}
           </div>
 
-          {/* MODELO DIGITÁVEL COM AUTOCOMPLETE */}
+          {/* MODELO */}
           <div>
             <label className="text-xs text-slate-400 block mb-1.5 font-medium">
               Modelo <span className="text-rose-500">*</span>
@@ -345,7 +468,13 @@ export function VeiculoForm({
               <input
                 type="text"
                 list="lista-modelos-fipe"
-                placeholder={marcaCodigo ? 'Digite ou escolha o modelo...' : 'Escolha a marca primeiro'}
+                placeholder={
+                  carregandoModelos
+                    ? 'Carregando modelos...'
+                    : marcaCodigo
+                    ? 'Digite ou escolha o modelo...'
+                    : 'Escolha a marca primeiro'
+                }
                 value={modeloNome}
                 onChange={(e) => handleModeloInputChange(e.target.value)}
                 disabled={!marcaCodigo || carregandoModelos}
@@ -365,7 +494,7 @@ export function VeiculoForm({
             {erros.modelo && <p className="text-[11px] text-rose-400 mt-1">{erros.modelo}</p>}
           </div>
 
-          {/* ANO E COMBUSTÍVEL + FLAGS APENAS VISUAIS */}
+          {/* ANO E COMBUSTÍVEL */}
           <div className="sm:col-span-2">
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs text-slate-400 font-medium">
@@ -387,7 +516,11 @@ export function VeiculoForm({
                 }`}
               >
                 <option value="">
-                  {modeloCodigo ? 'Selecione o Ano e Versão...' : 'Selecione o modelo primeiro'}
+                  {carregandoAnos
+                    ? 'Buscando anos...'
+                    : modeloCodigo
+                    ? 'Selecione o Ano e Versão...'
+                    : 'Selecione o modelo primeiro'}
                 </option>
                 {listaAnos.map((item) => (
                   <option key={item.valor} value={item.valor} className="bg-[#131b2e] text-slate-200">
@@ -399,19 +532,20 @@ export function VeiculoForm({
                 <Loader2 size={14} className="animate-spin text-blue-400 absolute right-3 top-3" />
               )}
             </div>
-            {erros.anoFabricacao && <p className="text-[11px] text-rose-400 mt-1">{erros.anoFabricacao}</p>}
+            {erros.anoFabricacao && (
+              <p className="text-[11px] text-rose-400 mt-1">{erros.anoFabricacao}</p>
+            )}
 
-            {/* AVISO DE RATE LIMIT / FALLBACK */}
             {avisoFipeInstavel && (
               <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-2 text-[11px] text-amber-300">
                 <AlertTriangle size={14} className="flex-shrink-0 text-amber-400" />
                 <span>
-                  Tabela FIPE em limite temporário de requisições. Lista carregada em modo de contingência.
+                  Tabela FIPE em contingência. Lista de anos carregada em modo de segurança.
                 </span>
               </div>
             )}
 
-            {/* FLAGS APENAS VISUAIS DE PROPULSÃO / MOTORIZAÇÃO */}
+            {/* FLAGS DE PROPULSÃO */}
             <div className="mt-3.5 pt-3 border-t border-slate-800/80">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
@@ -425,9 +559,7 @@ export function VeiculoForm({
                 )}
               </div>
 
-              {/* CONTAINER COM POINTER-EVENTS-NONE (NÃO EDITÁVEL) */}
               <div className="grid grid-cols-3 gap-2 pointer-events-none select-none">
-                {/* FLAG COMBUSTÃO */}
                 <div
                   className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-xs font-medium transition-all ${
                     tipoPropulsao === 'combustao'
@@ -439,7 +571,6 @@ export function VeiculoForm({
                   <span>Combustão</span>
                 </div>
 
-                {/* FLAG HÍBRIDO */}
                 <div
                   className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-xs font-medium transition-all ${
                     tipoPropulsao === 'hibrido'
@@ -451,7 +582,6 @@ export function VeiculoForm({
                   <span>Híbrido</span>
                 </div>
 
-                {/* FLAG ELÉTRICO */}
                 <div
                   className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-xs font-medium transition-all ${
                     tipoPropulsao === 'eletrico'
@@ -466,7 +596,7 @@ export function VeiculoForm({
             </div>
           </div>
 
-          {/* CONSUMO MÉDIO (EDITÁVEL) */}
+          {/* CONSUMO MÉDIO */}
           <div className="sm:col-span-2">
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs text-slate-400 font-medium">
@@ -484,7 +614,7 @@ export function VeiculoForm({
               <input
                 type="number"
                 step="0.01"
-                placeholder={tipoPropulsao === 'eletrico' ? 'Ex: 14.2' : 'Ex: 13.5'}
+                placeholder={vehicleType === 'caminhoes' ? 'Ex: 3.5' : tipoPropulsao === 'eletrico' ? 'Ex: 14.2' : 'Ex: 13.5'}
                 value={consumo}
                 onChange={(e) => setConsumo(e.target.value)}
                 className={`w-full px-3.5 py-2.5 bg-[#131b2e] border rounded-lg text-xs text-slate-200 font-mono focus:outline-none transition-all ${
@@ -502,7 +632,7 @@ export function VeiculoForm({
 
             {sugestaoConsumoAtiva && (
               <div className="mt-2 p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-lg flex items-start gap-2 text-[11px] text-blue-300">
-                <Sparkles size={14} className="flex-shrink-0 mt-0.5 text-blue-400" />
+                <Lightbulb size={14} className="flex-shrink-0 mt-0.5 text-blue-400" />
                 <p>
                   Propulsão identificada como <strong>{combustivelEspecifico}</strong> ({tipoPropulsao}). A taxa de consumo foi estimada e pode ser editada livremente.
                 </p>

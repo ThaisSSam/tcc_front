@@ -6,7 +6,11 @@ import { BaseDataTable } from "../../../contexts/BaseDataTable";
 import { createVeiculoColumns, type Veiculo } from "./table/tableConfig";
 import { veiculosEndpoints, type VeiculoDTO } from "../../../services/endpoints/veiculos";
 
-export default function ConsultarVeiculosScreen() {
+interface PropsComLogout {
+  onLogout?: () => void;
+}
+
+export default function ConsultarVeiculosScreen({ onLogout }: PropsComLogout) {
   const navigate = useNavigate();
 
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
